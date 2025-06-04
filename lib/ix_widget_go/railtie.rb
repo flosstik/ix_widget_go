@@ -71,137 +71,138 @@ module IxWidgetGo
 
     class Error < StandardError; end
 
-  # Direct FFI wrapper methods that match the original Ruby interface
-  def self.build_data(calculation_data, level = 0, widget)
-    return [] unless calculation_data && !calculation_data.empty?
-    return [] unless available?
+    # Direct FFI wrapper methods that match the original Ruby interface
+    def self.build_data(calculation_data, level = 0, widget)
+      return [] unless calculation_data && !calculation_data.empty?
+      return [] unless available?
 
-    # Prepare the request matching Go's BuildDataRequest structure
-    request = {
-      calculation_data: calculation_data,
-      widget: prepare_widget(widget)
-    }
+      # Prepare the request matching Go's BuildDataRequest structure
+      request = {
+        calculation_data: calculation_data,
+        widget: prepare_widget(widget)
+      }
 
-    # Call Go function
-    request_json = request.to_json
-    response_ptr = BuildData(request_json)
+      # Call Go function
+      request_json = request.to_json
+      response_ptr = BuildData(request_json)
 
-    begin
-      # Get response string
-      response_json = response_ptr.read_string
+      begin
+        # Get response string
+        response_json = response_ptr.read_string
 
-      # Check for errors
-      if response_json.include?('"error"')
-        error_data = JSON.parse(response_json)
-        Rails.logger.error "Go BuildData error: #{error_data['error']}" if defined?(Rails)
-        return []
+        # Check for errors
+        if response_json.include?('"error"')
+          error_data = JSON.parse(response_json)
+          Rails.logger.error "Go BuildData error: #{error_data['error']}" if defined?(Rails)
+          return []
+        end
+
+        # Parse and return the result
+        JSON.parse(response_json)
+      rescue => e
+        Rails.logger.error "FFI build_data error: #{e.message}" if defined?(Rails)
+        []
+      ensure
+        # Free the C string
+        FreeString(response_ptr) if response_ptr
+      end
+    end
+
+    def self.build_row(breakdown_label, breakdown_tooltip, row_data, widget)
+      return {} unless available?
+      # Prepare the request matching Go's BuildRowRequest structure
+      request = {
+        breakdown_label: breakdown_label,
+        breakdown_tooltip: breakdown_tooltip,
+        row_data: row_data,
+        widget: prepare_widget(widget)
+      }
+
+      # Call Go function
+      request_json = request.to_json
+      response_ptr = BuildRow(request_json)
+
+      begin
+        # Get response string
+        response_json = response_ptr.read_string
+
+        # Check for errors
+        if response_json.include?('"error"')
+          error_data = JSON.parse(response_json)
+          Rails.logger.error "Go BuildRow error: #{error_data['error']}" if defined?(Rails)
+          return {}
+        end
+
+        # Parse and return the result
+        JSON.parse(response_json)
+      rescue => e
+        Rails.logger.error "FFI build_row error: #{e.message}" if defined?(Rails)
+        {}
+      ensure
+        # Free the C string
+        FreeString(response_ptr) if response_ptr
+      end
+    end
+
+    private
+
+    # Prepare widget data for Go
+    def self.prepare_widget(widget)
+      # Extract campaign targets if available
+      campaign_targets = if widget.respond_to?(:campaigns_ids)
+        CampaignsTarget.where(
+          id: widget.settings.indicators.map(&:campaign_target_id).compact,
+          campaign_id: widget.campaigns_ids
+        ).map do |target|
+          {
+            id: target.id.to_s,
+            name: target.name,
+            target: target.target.to_f,
+            margin: target.margin.to_f,
+            revert_calcul: target.revert_calcul
+          }
+        end
+      else
+        []
       end
 
-      # Parse and return the result
-      JSON.parse(response_json)
-    rescue => e
-      Rails.logger.error "FFI build_data error: #{e.message}" if defined?(Rails)
-      []
-    ensure
-      # Free the C string
-      FreeString(response_ptr) if response_ptr
-    end
-  end
-
-  def self.build_row(breakdown_label, breakdown_tooltip, row_data, widget)
-    return {} unless available?
-    # Prepare the request matching Go's BuildRowRequest structure
-    request = {
-      breakdown_label: breakdown_label,
-      breakdown_tooltip: breakdown_tooltip,
-      row_data: row_data,
-      widget: prepare_widget(widget)
-    }
-
-    # Call Go function
-    request_json = request.to_json
-    response_ptr = BuildRow(request_json)
-
-    begin
-      # Get response string
-      response_json = response_ptr.read_string
-
-      # Check for errors
-      if response_json.include?('"error"')
-        error_data = JSON.parse(response_json)
-        Rails.logger.error "Go BuildRow error: #{error_data['error']}" if defined?(Rails)
-        return {}
+      # Extract schema questions if available
+      schema_questions = if widget.respond_to?(:schema_presenter)
+        widget.schema_presenter.questions.pluck(:name)
+      else
+        []
       end
 
-      # Parse and return the result
-      JSON.parse(response_json)
-    rescue => e
-      Rails.logger.error "FFI build_row error: #{e.message}" if defined?(Rails)
-      {}
-    ensure
-      # Free the C string
-      FreeString(response_ptr) if response_ptr
+      {
+        settings: {
+          indicators: prepare_indicators(widget.settings.indicators),
+          amount_indicators: prepare_indicators(widget.settings.amount_indicators || []),
+          breakdowns: widget.settings.breakdowns || [],
+          concept_breakdowns: widget.settings.concept_breakdowns || [],
+          order_column: widget.settings.order_column,
+          order_direction: widget.settings.order_direction
+        },
+        schema_questions: schema_questions,
+        campaign_targets: campaign_targets
+      }
     end
-  end
 
-  private
+    # Prepare indicators for Go
+    def self.prepare_indicators(indicators)
+      return [] unless indicators
 
-  # Prepare widget data for Go
-  def self.prepare_widget(widget)
-    # Extract campaign targets if available
-    campaign_targets = if widget.respond_to?(:campaigns_ids)
-      CampaignsTarget.where(
-        id: widget.settings.indicators.map(&:campaign_target_id).compact,
-        campaign_id: widget.campaigns_ids
-      ).map do |target|
+      indicators.map do |indicator|
         {
-          id: target.id.to_s,
-          name: target.name,
-          target: target.target.to_f,
-          margin: target.margin.to_f,
-          revert_calcul: target.revert_calcul
+          id: indicator.id.to_s,
+          type: indicator.type,
+          question: indicator.question,
+          title: indicator.title,
+          measure: indicator.measure,
+          response_items: indicator.response_items || [],
+          digits: indicator.digits || 1,
+          campaign_target_id: indicator.campaign_target_id.to_s
         }
       end
-    else
-      []
-    end
-
-    # Extract schema questions if available
-    schema_questions = if widget.respond_to?(:schema_presenter)
-      widget.schema_presenter.questions.pluck(:name)
-    else
-      []
-    end
-
-    {
-      settings: {
-        indicators: prepare_indicators(widget.settings.indicators),
-        amount_indicators: prepare_indicators(widget.settings.amount_indicators || []),
-        breakdowns: widget.settings.breakdowns || [],
-        concept_breakdowns: widget.settings.concept_breakdowns || [],
-        order_column: widget.settings.order_column,
-        order_direction: widget.settings.order_direction
-      },
-      schema_questions: schema_questions,
-      campaign_targets: campaign_targets
-    }
-  end
-
-  # Prepare indicators for Go
-  def self.prepare_indicators(indicators)
-    return [] unless indicators
-
-    indicators.map do |indicator|
-      {
-        id: indicator.id.to_s,
-        type: indicator.type,
-        question: indicator.question,
-        title: indicator.title,
-        measure: indicator.measure,
-        response_items: indicator.response_items || [],
-        digits: indicator.digits || 1,
-        campaign_target_id: indicator.campaign_target_id.to_s
-      }
     end
   end
 end

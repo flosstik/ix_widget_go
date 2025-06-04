@@ -17,11 +17,11 @@ module IxWidgetGo
       # Apply monkey patch after Rails is initialized
       if defined?(WidgetViews::SurveyResponse::Table)
         module WidgetViews::SurveyResponse::Table::FFIExtension
-          def build_data
+          def build_data(level: 0, path: "Total", acc: [])
             return [] if calculation_data[0].blank?
             return super unless should_use_ffi? && IxWidgetGo::TableDataFFI.available?
 
-            IxWidgetGo::TableDataFFI.build_data(calculation_data, 0, widget)
+            IxWidgetGo::TableDataFFI.build_data(calculation_data, level, widget)
           end
 
           def build_row(breakdown_label, breakdown_tooltip, row_data)

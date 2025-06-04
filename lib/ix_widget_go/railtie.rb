@@ -17,35 +17,27 @@ module IxWidgetGo
       # Apply monkey patch after Rails is initialized
       if defined?(WidgetViews::SurveyResponse::Table)
         module WidgetViews::SurveyResponse::Table::FFIExtension
-          def build_data_with_ffi
+          def build_data
             return [] if calculation_data[0].blank?
-            return build_data_without_ffi(calculation_data, 0, widget) unless should_use_ffi?
+            return super unless should_use_ffi? && IxWidgetGo::TableDataFFI.available?
 
             IxWidgetGo::TableDataFFI.build_data(calculation_data, 0, widget)
           end
 
-          def build_row_with_ffi(breakdown_label, breakdown_tooltip, row_data)
-            return build_row_without_ffi(breakdown_label, breakdown_tooltip, row_data, widget) unless should_use_ffi?
+          def build_row(breakdown_label, breakdown_tooltip, row_data)
+            return super unless should_use_ffi? && IxWidgetGo::TableDataFFI.available?
 
             IxWidgetGo::TableDataFFI.build_row(breakdown_label, breakdown_tooltip, row_data, widget)
           end
 
           def should_use_ffi?
             total_rows = calculation_data.values.sum { |level| level.is_a?(Hash) ? level.size : 0 }
-            total_rows > 50
+            total_rows > 10
           end
         end
 
-        # Apply the monkey patch
-        WidgetViews::SurveyResponse::Table::Json.class_eval do
-          include WidgetViews::SurveyResponse::Table::FFIExtension
-
-          alias_method :build_data_without_ffi, :build_data
-          alias_method :build_data, :build_data_with_ffi
-
-          alias_method :build_row_without_ffi, :build_row
-          alias_method :build_row, :build_row_with_ffi
-        end
+        # Apply the monkey patch using prepend (modern Ruby way)
+        WidgetViews::SurveyResponse::Table::Json.prepend(WidgetViews::SurveyResponse::Table::FFIExtension)
 
         Rails.logger.info "IxWidgetGo: Monkey patch applied to WidgetViews::SurveyResponse::Table::Json"
       else

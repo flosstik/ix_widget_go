@@ -13,6 +13,44 @@ module IxWidgetGo
       else
         Rails.logger.warn "IxWidgetGo::TableDataFFI: Go library not available - using Ruby implementation"
       end
+
+      # Apply monkey patch after Rails is initialized
+      if defined?(WidgetViews::SurveyResponse::Table)
+        module WidgetViews::SurveyResponse::Table::FFIExtension
+          def build_data_with_ffi
+            return [] if calculation_data[0].blank?
+            return build_data_without_ffi(calculation_data, 0, widget) unless should_use_ffi?
+
+            IxWidgetGo::TableDataFFI.build_data(calculation_data, 0, widget)
+          end
+
+          def build_row_with_ffi(breakdown_label, breakdown_tooltip, row_data)
+            return build_row_without_ffi(breakdown_label, breakdown_tooltip, row_data, widget) unless should_use_ffi?
+
+            IxWidgetGo::TableDataFFI.build_row(breakdown_label, breakdown_tooltip, row_data, widget)
+          end
+
+          def should_use_ffi?
+            total_rows = calculation_data.values.sum { |level| level.is_a?(Hash) ? level.size : 0 }
+            total_rows > 50
+          end
+        end
+
+        # Apply the monkey patch
+        WidgetViews::SurveyResponse::Table::Json.class_eval do
+          include WidgetViews::SurveyResponse::Table::FFIExtension
+
+          alias_method :build_data_without_ffi, :build_data
+          alias_method :build_data, :build_data_with_ffi
+
+          alias_method :build_row_without_ffi, :build_row
+          alias_method :build_row, :build_row_with_ffi
+        end
+
+        Rails.logger.info "IxWidgetGo: Monkey patch applied to WidgetViews::SurveyResponse::Table::Json"
+      else
+        Rails.logger.warn "IxWidgetGo: WidgetViews::SurveyResponse::Table not found - monkey patch not applied"
+      end
     end
   end
   module TableDataFFI
@@ -205,39 +243,5 @@ module IxWidgetGo
         }
       end
     end
-  end
-end
-
-# Monkey patch to integrate with existing Ruby code
-if defined?(WidgetViews::SurveyResponse::Table)
-  module WidgetViews::SurveyResponse::Table::FFIExtension
-    def build_data_with_ffi
-      return [] if calculation_data[0].blank?
-      return build_data(calculation_data, 0, widget) unless should_use_ffi?
-
-      IxWidgetGo::TableDataFFI.build_data(calculation_data, 0, widget)
-    end
-
-    def build_row_with_ffi(breakdown_label, breakdown_tooltip, row_data)
-      return build_row(breakdown_label, breakdown_tooltip, row_data, widget) unless should_use_ffi?
-
-      IxWidgetGo::TableDataFFI.build_row(breakdown_label, breakdown_tooltip, row_data, widget)
-    end
-
-    def should_use_ffi?
-      total_rows = calculation_data.values.sum { |level| level.is_a?(Hash) ? level.size : 0 }
-      total_rows > 50
-    end
-  end
-
-  # Apply the monkey patch
-  WidgetViews::SurveyResponse::Table::Json.class_eval do
-    include WidgetViews::SurveyResponse::Table::FFIExtension
-
-    alias_method :build_data_without_ffi, :build_data
-    alias_method :build_data, :build_data_with_ffi
-
-    alias_method :build_row_without_ffi, :build_row
-    alias_method :build_row, :build_row_with_ffi
   end
 end

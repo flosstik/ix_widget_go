@@ -31,8 +31,7 @@ module IxWidgetGo
           end
 
           def should_use_ffi?
-            total_rows = calculation_data.values.sum { |level| level.is_a?(Hash) ? level.size : 0 }
-            total_rows > 10
+            true
           end
         end
 

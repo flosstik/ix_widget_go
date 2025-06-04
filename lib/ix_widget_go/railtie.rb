@@ -2,13 +2,25 @@
 
 require 'ffi'
 require 'json'
+require 'rails/railtie'
 
 module IxWidgetGo
+  class Railtie < Rails::Railtie
+    config.after_initialize do
+      # Log library loading status after Rails is initialized
+      if IxWidgetGo::TableDataFFI.available?
+        Rails.logger.info "IxWidgetGo::TableDataFFI: Go library loaded successfully from #{IxWidgetGo::TableDataFFI.library_path}"
+      else
+        Rails.logger.warn "IxWidgetGo::TableDataFFI: Go library not available - using Ruby implementation"
+      end
+    end
+  end
   module TableDataFFI
     extend FFI::Library
 
     # Track if library is loaded
     @library_loaded = false
+    @library_path = nil
 
     # Load the Go shared library
     begin
@@ -30,19 +42,10 @@ module IxWidgetGo
       if File.exist?(library_path)
         ffi_lib library_path
         @library_loaded = true
-
-        if defined?(Rails)
-          Rails.logger.info "IxWidgetGo::TableDataFFI: Loaded library from #{library_path}"
-        end
-      else
-        if defined?(Rails)
-          Rails.logger.warn "IxWidgetGo::TableDataFFI: Library not found at #{library_path}"
-        end
+        @library_path = library_path
       end
     rescue LoadError => e
-      if defined?(Rails)
-        Rails.logger.warn "IxWidgetGo::TableDataFFI: Failed to load Go library - #{e.message}"
-      end
+      # Silently fail - will log error after Rails initializes
     end
 
     # Define the FFI functions - simplified interface matching the Go implementation
@@ -54,19 +57,17 @@ module IxWidgetGo
         attach_function :FreeString, [:pointer], :void
       rescue => e
         @library_loaded = false
-        if defined?(Rails)
-          Rails.logger.warn "IxWidgetGo::TableDataFFI: Failed to attach functions - #{e.message}"
-        end
-      end
-    else
-      if defined?(Rails)
-        Rails.logger.warn "IxWidgetGo::TableDataFFI: Library not loaded, functions not attached"
       end
     end
 
     # Check if library is available
     def self.available?
       @library_loaded && respond_to?(:BuildData) && respond_to?(:BuildRow)
+    end
+
+    # Get the library path (for logging)
+    def self.library_path
+      @library_path
     end
 
     class Error < StandardError; end
@@ -93,14 +94,14 @@ module IxWidgetGo
         # Check for errors
         if response_json.include?('"error"')
           error_data = JSON.parse(response_json)
-          Rails.logger.error "Go BuildData error: #{error_data['error']}" if defined?(Rails)
+          Rails.logger.error "Go BuildData error: #{error_data['error']}" if defined?(Rails) && Rails.respond_to?(:logger) && Rails.logger
           return []
         end
 
         # Parse and return the result
         JSON.parse(response_json)
       rescue => e
-        Rails.logger.error "FFI build_data error: #{e.message}" if defined?(Rails)
+        Rails.logger.error "FFI build_data error: #{e.message}" if defined?(Rails) && Rails.respond_to?(:logger) && Rails.logger
         []
       ensure
         # Free the C string
@@ -129,14 +130,14 @@ module IxWidgetGo
         # Check for errors
         if response_json.include?('"error"')
           error_data = JSON.parse(response_json)
-          Rails.logger.error "Go BuildRow error: #{error_data['error']}" if defined?(Rails)
+          Rails.logger.error "Go BuildRow error: #{error_data['error']}" if defined?(Rails) && Rails.respond_to?(:logger) && Rails.logger
           return {}
         end
 
         # Parse and return the result
         JSON.parse(response_json)
       rescue => e
-        Rails.logger.error "FFI build_row error: #{e.message}" if defined?(Rails)
+        Rails.logger.error "FFI build_row error: #{e.message}" if defined?(Rails) && Rails.respond_to?(:logger) && Rails.logger
         {}
       ensure
         # Free the C string
